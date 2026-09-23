@@ -112,14 +112,14 @@ class CrealityCloud(object):
 
         #report curFeedratePct
         if self._aliprinter._str_curFeedratePct:
-            try:
-                S_location = self._aliprinter._str_curFeedratePct.find("S")
-                int_curfeedratepct = self._aliprinter._str_curFeedratePct[
-                    S_location + 1 : len(self._aliprinter._str_curFeedratePct)
-                ]
-                self._aliprinter.curFeedratePct = int(int_curfeedratepct)
-            except Exception as e:
-                self._logger.error(e)
+            s_cmd = self._aliprinter._str_curFeedratePct
+            self._aliprinter._str_curFeedratePct = ""
+            S_location = s_cmd.find("S")
+            if S_location > 0:
+                try:
+                    self._aliprinter.curFeedratePct = int(float(s_cmd[S_location + 1:]))
+                except Exception as e:
+                    self._logger.error(e)
 
         #get temperatures data
         temp_data = self._octoprinter.get_current_temperatures()
