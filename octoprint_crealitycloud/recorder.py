@@ -9,6 +9,8 @@ import logging
 import json
 import shutil
 
+from .config import DEFAULT_STREAM_URL, resolve_video_source
+
 class RecorderOutOfSizeLimitError(Exception):
     def __init__(self, msg):
         self.message = msg
@@ -26,8 +28,9 @@ class RepeatingTimer(threading.Timer):
 
 
 class Recorder(object):
-    def __init__(self, path):
-        self.mjpg_stream_url = "http://127.0.0.1/webcam/?action=stream"
+    def __init__(self, path, plugin=None):
+        self.mjpg_stream_url = DEFAULT_STREAM_URL
+        self.plugin = plugin
         self.timer = None
         self.ffmpeg = None
         self._logger = logging.getLogger("octoprint.plugins.crealitycloudrecorder")
@@ -40,6 +43,20 @@ class Recorder(object):
         self.ffmpeg_play = None
         self.path_play = None
         self.flag = 0
+
+    def _resolve_input(self):
+        # recording follows the configured video source; returns (url, ffmpeg input options)
+        if self.plugin is not None:
+            vs = resolve_video_source(self.plugin._settings)
+            if vs["disableStream"]:
+                return None, None
+            if vs["enableRtspServer"]:
+                # single ffmpeg pull: live push and recording both consume the local RTSP
+                return "rtsp://127.0.0.1:8554/ch0_0", None
+            if vs["source"].startswith(("rtsp://", "rtsps://")):
+                return vs["source"], None
+            return vs["source"], ["-r", "10"]
+        return self.mjpg_stream_url, None
 
     @staticmethod
     def get_platform(self):
@@ -118,12 +135,15 @@ class Recorder(object):
         """
         FFmpeg records video and generates a file per minute
         """
+        url, in_opts = self._resolve_input()
+        if url is None:
+            return
         if self.is_out_limit_size():
             raise RecorderOutOfSizeLimitError("Recorder out of size limit")
         path = self.get_new_recorder_hour_dir()
         if self.get_platform(self) == "win_x64":
             self.ffmpeg = FFmpeg(
-                inputs={self.mjpg_stream_url: None},
+                inputs={url: in_opts},
                 outputs={path + '/%H-%M-%S.mp4': ["-vf",
                                             "drawtext=fontfile='C\:/Windows/fonts/Arial.ttf': text='%{pts\:localtime\:" + str(
                                                 time.time()) + "}': x=10: y=10: fontcolor=white: box=1: boxcolor=0x00000000@1",
@@ -133,7 +153,7 @@ class Recorder(object):
             )
         else:
             self.ffmpeg = FFmpeg(
-                inputs={self.mjpg_stream_url: None},
+                inputs={url: in_opts},
                 outputs={path + '/%H-%M-%S.mp4': [
                                             #"-vf",
                                             #"drawtext=fontfile=Arial.ttf: text='%{pts\:localtime\:" + str(
@@ -174,6 +194,8 @@ class Recorder(object):
         """
         Start record and daemon
         """
+        if self.plugin is not None and resolve_video_source(self.plugin._settings)["disableStream"]:
+            return False
         if self.ffmpeg == None and self.is_out_limit_size() == False:
             self.timer = RepeatingTimer(1, self.top_of_hour_restart)
             self.timer.start()

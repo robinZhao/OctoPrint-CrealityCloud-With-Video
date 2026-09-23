@@ -2,6 +2,7 @@ from aiortc import RTCIceCandidate, RTCSessionDescription, RTCConfiguration, RTC
 #from aiortc.contrib.media import MediaPlayer, MediaBlackhole
 from .media_handlers import MediaPlayer, MediaBlackhole
 from .recorder import Recorder
+from .config import DEFAULT_STREAM_URL
 import platform
 import requests
 import json
@@ -14,7 +15,7 @@ from octoprint.util import RepeatedTimer
 
 class WebrtcManager():
 
-    def __init__(self,devuceName, our_peer_id, options, close_queue, token, region, recorder, verbose=False):
+    def __init__(self,devuceName, our_peer_id, options, close_queue, token, region, recorder, video=None, verbose=False):
         self._logger = logging.getLogger("octoprint.plugins.crealitycloud")
         self.our_peer_id = our_peer_id
         self.peers = {}
@@ -30,6 +31,7 @@ class WebrtcManager():
         self.region = region
         self.count = 0
         self.recorder = recorder
+        self.video = video or {}
         self.filepath = ""
         # self.iceServers = [
         #     {"urls": "stun:stun.l.google.com:19302"},
@@ -218,8 +220,18 @@ class WebrtcManager():
         else:
             if self.options.get('cameraDevice'):
                 if len(peer['media']) == 0:
-                #webcam = MediaPlayer(self.options.get('cameraDevice'), format="v4l2", options=options)
-                    webcam = MediaPlayer('rtsp://127.0.0.1:8554/ch0_0', format="rtsp", options=options)
+                    if self.video.get("enableRtspServer"):
+                        webcam = MediaPlayer('rtsp://127.0.0.1:8554/ch0_0', format="rtsp", options=options)
+                    else:
+                        # direct mode: feed the configured stream source into aiortc
+                        source = self.video.get("source") or DEFAULT_STREAM_URL
+                        try:
+                            webcam = MediaPlayer(source, options={"rtbufsize": "160M"})
+                        except Exception as e:
+                            # no explicit retry: drop this peer and keep the signaling service alive
+                            self._logger.error("failed to open stream source " + source + ": " + str(e))
+                            self.close_queue.put(peer['peerId'])
+                            return
                 else:
                     webcam = MediaPlayer(self.filepath)
         peer['mediaplayer'] = webcam
@@ -470,7 +482,8 @@ class WebrtcManager():
         peer_ids = list(self.peers.keys())
         for peer_id in peer_ids:                
             if peerId == peer_id:
-                self.peers[peerId]["localVideoStream"].stop()
+                if self.peers[peerId]["localVideoStream"] is not None:
+                    self.peers[peerId]["localVideoStream"].stop()
                 await self.peers[peerId]["rtcPeerConnection"].close()
                 del self.peers[peerId]
                 if(self.verbose):

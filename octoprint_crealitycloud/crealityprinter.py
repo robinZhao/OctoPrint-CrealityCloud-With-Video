@@ -27,7 +27,7 @@ from octoprint.filemanager.destinations import FileDestinations
 from octoprint.util import RepeatedTimer
 from octoprint_crealitycloud.filecontrol import filecontrol
 
-from .config import CrealityConfig
+from .config import CrealityConfig, resolve_video_source
 
 
 class ErrorCode(Enum):
@@ -775,6 +775,9 @@ class CrealityPrinter(object):
             self.WebrtcManager.token_update(self._jwttoken)
         self._attributes_msg["token"] = self._jwttoken
 
+        if resolve_video_source(self.settings)["disableStream"]:
+            self._logger.info("video disabled by settings, skip webrtc service")
+            return
         if self._webrtc_thread is None:
             try:
                 self._webrtc_thread = threading.Thread(target=self.start_webrtc_service)
@@ -839,13 +842,14 @@ class CrealityPrinter(object):
             URL = "wss://api.crealitycloud.cn/api/cxy/ws/webrtc/signal/push/"
         else:
             URL = "wss://api.crealitycloud.com/api/cxy/ws/webrtc/signal/push/"
+        vs = resolve_video_source(self.settings)
         webrtcOptions = {"enableDataChannel": False,
                 "enableLocalStream": True,
                 "enableRemoteStream": False,
-                "cameraDevice": "rtsp://127.0.0.1:8554/ch0_0"}
+                "cameraDevice": vs["source"]}
         # websocket_queue = queue.Queue()
         # close_queue = queue.Queue()
-        self.WebrtcManager = WebrtcManager(self._thingsboard_Id, self._thingsboard_Id, webrtcOptions, self.close_queue, self._jwttoken, self.region, self.recorder, verbose=True)
+        self.WebrtcManager = WebrtcManager(self._thingsboard_Id, self._thingsboard_Id, webrtcOptions, self.close_queue, self._jwttoken, self.region, self.recorder, vs, verbose=True)
         self.WebSocketClient = WebSocketClient(URL + self._thingsboard_Id, self.websocket_queue, self._jwttoken)
         self._pc_update_timer = RepeatedTimer(30,self.peerconnection_upadate,run_first=False)
         self._pc_update_timer.start()

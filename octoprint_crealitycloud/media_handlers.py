@@ -26,6 +26,7 @@ REAL_TIME_FORMATS = [
     "iec61883",
     "jack",
     "kmsgrab",
+    "mjpeg",
     "openal",
     "oss",
     "pulse",

@@ -8,6 +8,8 @@ import calendar;
 import time;
 import asyncio
 import queue
+import platform
+import re
 from .signaling_channel import WebSocketClient
 from .webrtc_manager import WebrtcManager
 
@@ -15,7 +17,7 @@ from octoprint.events import Events
 from octoprint.util import RepeatedTimer
 from octoprint.printer import PrinterCallback
 
-from .config import CrealityConfig
+from .config import CrealityConfig, resolve_video_source
 from .crealityprinter import CrealityPrinter, ErrorCode
 from .crealitytb import ThingsBoard
 from .cxhttp import CrealityAPI
@@ -377,16 +379,51 @@ class CrealityCloud(object):
         # self.start_p2p_service()
         # self._logger.info("video service started")
         #self.webrtc_start()
-        if self._video_service_thread is not None:
+        vs = resolve_video_source(self.plugin._settings)
+        if vs["disableStream"] or not vs["enableRtspServer"]:
+            # direct mode: the stream is fed into aiortc, no mediamtx relay needed
             return
+        if self._video_service_thread is not None and self._video_service_thread.is_alive():
+            return
+        yml_path = self._generate_rtsp_yml(vs)
         video_service_path = (
             os.path.dirname(os.path.abspath(__file__)) + "/bin/rtsp_server.sh"
         )
         env = os.environ.copy()
         self._video_service_thread = threading.Thread(
-            target=self._runcmd, args=(["/bin/bash", video_service_path], env)
+            target=self._runcmd, args=(["/bin/bash", video_service_path, yml_path], env)
         )
         self._video_service_thread.start()
+
+    def _generate_rtsp_yml(self, vs):
+        # generate the mediamtx config into the plugin data folder with the
+        # ch0_0 runOnInit ffmpeg input replaced by the configured stream source
+        machine = platform.machine()
+        plat_dir = "Linux64_aarch64" if machine == "aarch64" else "Linux32_armv7l"
+        template_path = (
+            os.path.dirname(os.path.abspath(__file__))
+            + "/bin/" + plat_dir + "/rtsp-simple-server.yml"
+        )
+        source = vs["source"]
+        input_opts = "-i " if source.startswith(("rtsp://", "rtsps://")) else "-r 10 -i "
+        cmd = (
+            "/usr/bin/ffmpeg " + input_opts + source
+            + " -loglevel quiet -tune zerolatency -vcodec libx264 -preset ultrafast"
+            + " -f rtsp rtsp://127.0.0.1:8554/ch0_0"
+        )
+        with io.open(template_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # count=1 hits the ch0_0 runOnInit line (it precedes the empty one in the "all" block)
+        content = re.sub(r"(?m)^(\s*)runOnInit:.*$", r"\1runOnInit: " + cmd, content, count=1)
+        yml_path = os.path.join(self.plugin.get_plugin_data_folder(), "rtsp-simple-server.yml")
+        with io.open(yml_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        self._logger.info("rtsp yml generated, runOnInit: " + cmd)
+        return yml_path
+
+    def _video_available(self):
+        # the gate no longer checks /dev/video0; only the master switch decides
+        return not resolve_video_source(self.plugin._settings)["disableStream"]
 
     def device_start(self):
         if self.thingsboard is None:
@@ -403,7 +440,7 @@ class CrealityCloud(object):
                 self._aliprinter.connect = 1
             else:
                 self._aliprinter.connect = 0
-        if os.path.exists("/dev/video0"):
+        if self._video_available():
             self._aliprinter.video = 1
             self.video_start()
         else:
@@ -427,7 +464,7 @@ class CrealityCloud(object):
         if event == Events.STARTUP:
 
             self._aliprinter.connect = 0
-            if os.path.exists("/dev/video0"):
+            if self._video_available():
                 self._aliprinter.video = 1
                 self.video_start()
             else:
@@ -523,7 +560,7 @@ class CrealityCloud(object):
                 except Exception as e:
                     self._logger.error("remove temp file fail! ERROR:" + e)
 
-            if self._aliprinter.printId != "" and os.path.exists("/dev/video0"):
+            if self._aliprinter.printId != "" and self._video_available():
                 self.recorder.set_printid(self._aliprinter.printId)
                 self.recorder.run()
                 self._logger.info('printid:' + str(self._aliprinter.printId))

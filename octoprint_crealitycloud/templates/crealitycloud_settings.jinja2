@@ -38,3 +38,31 @@
     <input id="token_file_input" type="file" class="settings_token_input" accept=".tk">
   </span>
 </div>
+
+<hr>
+<h3>{{ _('Video') }}</h3>
+<div class="control-group">
+  <label class="control-label">{{ _('Disable all video features') }}</label>
+  <div class="controls">
+    <label class="checkbox">
+      <input type="checkbox" data-bind="checked: settings.video.disableStream">
+      {{ _('No live push, no replay push, no recording and no RTSP server') }}
+    </label>
+  </div>
+</div>
+<div class="control-group" data-bind="visible: !settings.video.disableStream()">
+  <label class="control-label">{{ _('Stream URL') }}</label>
+  <div class="controls">
+    <input type="text" class="input-xlarge" data-bind="value: settings.video.externalUrl, valueUpdate: 'keyup'">
+    <p class="help-block">{{ _('Any address ffmpeg can open (http MJPEG, rtsp, ...). Leave empty to use the default webcam address http://127.0.0.1/webcam/?action=stream') }}</p>
+  </div>
+</div>
+<div class="control-group" data-bind="visible: !settings.video.disableStream()">
+  <label class="control-label">{{ _('Enable RTSP relay server') }}</label>
+  <div class="controls">
+    <label class="checkbox">
+      <input type="checkbox" data-bind="checked: settings.video.enableRtspServer">
+      {{ _('Run rtsp-simple-server and relay the stream via local RTSP (existing logic). When off, the stream is fed directly into aiortc') }}
+    </label>
+  </div>
+</div>

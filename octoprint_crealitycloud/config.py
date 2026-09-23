@@ -2,6 +2,23 @@ import json
 import logging
 import os
 
+DEFAULT_STREAM_URL = "http://127.0.0.1/webcam/?action=stream"
+
+
+def resolve_video_source(settings):
+    """
+    Resolve the video source from OctoPrint plugin settings.
+
+    :param settings: OctoPrint Settings object (plugin._settings)
+    :return: dict with disableStream / enableRtspServer / source
+    """
+    source = (settings.get(["video", "externalUrl"]) or "").strip() or DEFAULT_STREAM_URL
+    return {
+        "disableStream": bool(settings.get(["video", "disableStream"])),
+        "enableRtspServer": bool(settings.get(["video", "enableRtspServer"])),
+        "source": source,
+    }
+
 
 class CrealityConfig(object):
     def __init__(self, plugin) -> None:

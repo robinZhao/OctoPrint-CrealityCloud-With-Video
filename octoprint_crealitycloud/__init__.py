@@ -38,13 +38,17 @@ class CrealitycloudPlugin(
         self.printing_befor_connect = True
 
     def initialize(self):
-        self.recorder = Recorder(self.get_plugin_data_folder())
+        self.recorder = Recorder(self.get_plugin_data_folder(), self)
         self._crealitycloud = CrealityCloud(self, self.recorder)
         self._cxapi = CrealityAPI()
 
     def get_settings_defaults(self):
         return {
-            # put your plugin's default settings here
+            "video": {
+                "disableStream": False,
+                "externalUrl": "http://127.0.0.1/webcam/?action=stream",
+                "enableRtspServer": False,
+            }
         }
 
     ##~~ AssetPlugin mixin
