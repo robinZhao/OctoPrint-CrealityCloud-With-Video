@@ -775,7 +775,7 @@ class CrealityPrinter(object):
             self.WebrtcManager.token_update(self._jwttoken)
         self._attributes_msg["token"] = self._jwttoken
 
-        if resolve_video_source(self.settings)["disableStream"]:
+        if resolve_video_source(self._config.data())["disableStream"]:
             self._logger.info("video disabled by settings, skip webrtc service")
             return
         if self._webrtc_thread is None:
@@ -842,14 +842,12 @@ class CrealityPrinter(object):
             URL = "wss://api.crealitycloud.cn/api/cxy/ws/webrtc/signal/push/"
         else:
             URL = "wss://api.crealitycloud.com/api/cxy/ws/webrtc/signal/push/"
-        vs = resolve_video_source(self.settings)
         webrtcOptions = {"enableDataChannel": False,
                 "enableLocalStream": True,
-                "enableRemoteStream": False,
-                "cameraDevice": vs["source"]}
+                "enableRemoteStream": False}
         # websocket_queue = queue.Queue()
         # close_queue = queue.Queue()
-        self.WebrtcManager = WebrtcManager(self._thingsboard_Id, self._thingsboard_Id, webrtcOptions, self.close_queue, self._jwttoken, self.region, self.recorder, vs, verbose=True)
+        self.WebrtcManager = WebrtcManager(self._thingsboard_Id, self._thingsboard_Id, webrtcOptions, self.close_queue, self._jwttoken, self.region, self.recorder, self._config, verbose=True)
         self.WebSocketClient = WebSocketClient(URL + self._thingsboard_Id, self.websocket_queue, self._jwttoken)
         self._pc_update_timer = RepeatedTimer(30,self.peerconnection_upadate,run_first=False)
         self._pc_update_timer.start()

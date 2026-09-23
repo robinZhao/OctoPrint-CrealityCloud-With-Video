@@ -29,6 +29,7 @@ from aliyunsdkvod.request.v20170321.CreateUploadVideoRequest import CreateUpload
 from .cxvoduploader import AliyunVodUploader
 import json
 import base64
+import psutil
 
 class ProgressMonitor(PrinterCallback):
     def __init__(self, *args, **kwargs):
@@ -54,6 +55,7 @@ class CrealityCloud(object):
         self._aliprinter = None
         self._p2p_service_thread = None
         self._video_service_thread = None
+        self._video_service_popen = None
         self._p2p_service_thread = None
         self._video_service_thread = None
         self._active_service_thread = None
@@ -379,7 +381,7 @@ class CrealityCloud(object):
         # self.start_p2p_service()
         # self._logger.info("video service started")
         #self.webrtc_start()
-        vs = resolve_video_source(self.plugin._settings)
+        vs = resolve_video_source(self._config.data())
         if vs["disableStream"] or not vs["enableRtspServer"]:
             # direct mode: the stream is fed into aiortc, no mediamtx relay needed
             return
@@ -391,9 +393,30 @@ class CrealityCloud(object):
         )
         env = os.environ.copy()
         self._video_service_thread = threading.Thread(
-            target=self._runcmd, args=(["/bin/bash", video_service_path, yml_path], env)
+            target=self._run_video_service, args=(["/bin/bash", video_service_path, yml_path], env)
         )
         self._video_service_thread.start()
+
+    def _run_video_service(self, command, env):
+        popen = subprocess.Popen(command, env=env)
+        self._video_service_popen = popen
+        return_code = popen.wait()
+        self._video_service_popen = None
+
+    def video_stop(self):
+        # kill the mediamtx process tree (bash -> rtsp-simple-server -> runOnInit ffmpeg)
+        self._video_service_thread = None
+        popen = self._video_service_popen
+        self._video_service_popen = None
+        if popen is None or popen.poll() is not None:
+            return
+        try:
+            parent = psutil.Process(popen.pid)
+            for child in parent.children(recursive=True):
+                child.kill()
+            parent.kill()
+        except psutil.Error:
+            pass
 
     def _generate_rtsp_yml(self, vs):
         # generate the mediamtx config into the plugin data folder with the
@@ -414,7 +437,8 @@ class CrealityCloud(object):
         with io.open(template_path, "r", encoding="utf-8") as f:
             content = f.read()
         # count=1 hits the ch0_0 runOnInit line (it precedes the empty one in the "all" block)
-        content = re.sub(r"(?m)^(\s*)runOnInit:.*$", r"\1runOnInit: " + cmd, content, count=1)
+        # lambda replacement: cmd may contain backslashes, which re.sub would escape-process
+        content = re.sub(r"(?m)^(\s*)runOnInit:.*$", lambda m: m.group(1) + "runOnInit: " + cmd, content, count=1)
         yml_path = os.path.join(self.plugin.get_plugin_data_folder(), "rtsp-simple-server.yml")
         with io.open(yml_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -423,7 +447,7 @@ class CrealityCloud(object):
 
     def _video_available(self):
         # the gate no longer checks /dev/video0; only the master switch decides
-        return not resolve_video_source(self.plugin._settings)["disableStream"]
+        return not resolve_video_source(self._config.data())["disableStream"]
 
     def device_start(self):
         if self.thingsboard is None:

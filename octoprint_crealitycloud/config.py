@@ -5,17 +5,19 @@ import os
 DEFAULT_STREAM_URL = "http://127.0.0.1/webcam/?action=stream"
 
 
-def resolve_video_source(settings):
+def resolve_video_source(data):
     """
-    Resolve the video source from OctoPrint plugin settings.
+    Resolve the video source from the top-level keys of config.json
+    (disableStream / externalUrl / enableRtspServer).
 
-    :param settings: OctoPrint Settings object (plugin._settings)
+    :param data: dict from config.json (CrealityConfig.data(), may be empty)
     :return: dict with disableStream / enableRtspServer / source
     """
-    source = (settings.get(["video", "externalUrl"]) or "").strip() or DEFAULT_STREAM_URL
+    data = data or {}
+    source = (data.get("externalUrl") or "").strip() or DEFAULT_STREAM_URL
     return {
-        "disableStream": bool(settings.get(["video", "disableStream"])),
-        "enableRtspServer": bool(settings.get(["video", "enableRtspServer"])),
+        "disableStream": bool(data.get("disableStream", False)),
+        "enableRtspServer": bool(data.get("enableRtspServer", False)),
         "source": source,
     }
 

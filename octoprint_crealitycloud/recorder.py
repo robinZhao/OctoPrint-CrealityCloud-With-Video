@@ -9,7 +9,7 @@ import logging
 import json
 import shutil
 
-from .config import DEFAULT_STREAM_URL, resolve_video_source
+from .config import CrealityConfig, DEFAULT_STREAM_URL, resolve_video_source
 
 class RecorderOutOfSizeLimitError(Exception):
     def __init__(self, msg):
@@ -31,6 +31,7 @@ class Recorder(object):
     def __init__(self, path, plugin=None):
         self.mjpg_stream_url = DEFAULT_STREAM_URL
         self.plugin = plugin
+        self._config = CrealityConfig(plugin) if plugin is not None else None
         self.timer = None
         self.ffmpeg = None
         self._logger = logging.getLogger("octoprint.plugins.crealitycloudrecorder")
@@ -46,8 +47,8 @@ class Recorder(object):
 
     def _resolve_input(self):
         # recording follows the configured video source; returns (url, ffmpeg input options)
-        if self.plugin is not None:
-            vs = resolve_video_source(self.plugin._settings)
+        if self._config is not None:
+            vs = resolve_video_source(self._config.data())
             if vs["disableStream"]:
                 return None, None
             if vs["enableRtspServer"]:
@@ -194,7 +195,7 @@ class Recorder(object):
         """
         Start record and daemon
         """
-        if self.plugin is not None and resolve_video_source(self.plugin._settings)["disableStream"]:
+        if self._config is not None and resolve_video_source(self._config.data())["disableStream"]:
             return False
         if self.ffmpeg == None and self.is_out_limit_size() == False:
             self.timer = RepeatingTimer(1, self.top_of_hour_restart)

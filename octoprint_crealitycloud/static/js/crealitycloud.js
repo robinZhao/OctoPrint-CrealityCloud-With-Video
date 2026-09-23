@@ -43,6 +43,45 @@ $(function () {
     self.openCrealityCloud = function () {
       window.open("http://www.crealitycloud.com");
     };
+    self.videoSaved = ko.observable(false);
+    self.videoSavedMsg = ko.observable("");
+    self.loadVideoSettings = function () {
+      $.ajax({
+        type: "GET",
+        url: PLUGIN_BASEURL + "crealitycloud/videoSettings",
+        dataType: "json",
+        success: function (data) {
+          if (data.code == 0) {
+            $("#video_disableStream").prop("checked", data.disableStream);
+            $("#video_externalUrl").val(data.externalUrl);
+            $("#video_enableRtspServer").prop("checked", data.enableRtspServer);
+          }
+        }
+      });
+    };
+    self.saveVideoSettings = function () {
+      $.ajax({
+        type: "POST",
+        contentType: "application/json; charset=utf-8",
+        url: PLUGIN_BASEURL + "crealitycloud/videoSettings",
+        data: JSON.stringify({
+          disableStream: $("#video_disableStream").is(":checked"),
+          externalUrl: $("#video_externalUrl").val(),
+          enableRtspServer: $("#video_enableRtspServer").is(":checked")
+        }),
+        dataType: "json",
+        success: function (data) {
+          if (data.code == 0) {
+            self.videoSaved(true);
+            self.videoSavedMsg("Saved to config.json");
+            setTimeout(function () { self.videoSaved(false); }, 2000);
+          } else {
+            alert("Save failed");
+          }
+        }
+      });
+    };
+
     self.getStatus = function (bInit) {
       $.ajax({
         type: "GET",
@@ -73,6 +112,7 @@ $(function () {
     };
 
     self.getStatus(true);
+    self.loadVideoSettings();
 
   }
 

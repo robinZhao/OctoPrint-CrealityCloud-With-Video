@@ -45,24 +45,30 @@
   <label class="control-label">{{ _('Disable all video features') }}</label>
   <div class="controls">
     <label class="checkbox">
-      <input type="checkbox" data-bind="checked: settings.video.disableStream">
+      <input id="video_disableStream" type="checkbox">
       {{ _('No live push, no replay push, no recording and no RTSP server') }}
     </label>
   </div>
 </div>
-<div class="control-group" data-bind="visible: !settings.video.disableStream()">
+<div class="control-group">
   <label class="control-label">{{ _('Stream URL') }}</label>
   <div class="controls">
-    <input type="text" class="input-xlarge" data-bind="value: settings.video.externalUrl, valueUpdate: 'keyup'">
+    <input id="video_externalUrl" type="text" class="input-xlarge">
     <p class="help-block">{{ _('Any address ffmpeg can open (http MJPEG, rtsp, ...). Leave empty to use the default webcam address http://127.0.0.1/webcam/?action=stream') }}</p>
   </div>
 </div>
-<div class="control-group" data-bind="visible: !settings.video.disableStream()">
+<div class="control-group">
   <label class="control-label">{{ _('Enable RTSP relay server') }}</label>
   <div class="controls">
     <label class="checkbox">
-      <input type="checkbox" data-bind="checked: settings.video.enableRtspServer">
+      <input id="video_enableRtspServer" type="checkbox">
       {{ _('Run rtsp-simple-server and relay the stream via local RTSP (existing logic). When off, the stream is fed directly into aiortc') }}
     </label>
+  </div>
+</div>
+<div class="control-group">
+  <div class="controls">
+    <button class="btn btn-primary" data-bind="click: saveVideoSettings">{{ _('Save Video Settings') }}</button>
+    <span data-bind="text: videoSavedMsg, visible: videoSaved()" style="margin-left: 10px;"></span>
   </div>
 </div>

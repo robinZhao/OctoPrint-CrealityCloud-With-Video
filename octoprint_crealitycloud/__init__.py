@@ -44,11 +44,7 @@ class CrealitycloudPlugin(
 
     def get_settings_defaults(self):
         return {
-            "video": {
-                "disableStream": False,
-                "externalUrl": "http://127.0.0.1/webcam/?action=stream",
-                "enableRtspServer": False,
-            }
+            # put your plugin's default settings here
         }
 
     ##~~ AssetPlugin mixin
@@ -108,17 +104,25 @@ class CrealitycloudPlugin(
     def get_token(self):
         try:
             self._res = self._cxapi.getconfig(request.json["token"])["result"]
-            self._config = {               
+            cfg_path = self.get_plugin_data_folder() + '/config.json'
+            existing = {}
+            if os.path.exists(cfg_path):
+                try:
+                    with io.open(cfg_path, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                except Exception:
+                    existing = {}
+            # merge so video settings (disableStream/externalUrl/enableRtspServer) survive re-activation
+            existing.update({
                 "deviceName": self._res["deviceName"],
                 "deviceSecret": self._res["tbToken"],
                 "iotType": self._res["iotType"],
-				"region": self._res["regionId"]
-                }
+                "region": self._res["regionId"],
+            })
+            self._config = existing
             self._regionId = self._res["regionId"]
-            with io.open(
-                self.get_plugin_data_folder()+'/config.json', "w", encoding="utf-8"
-            ) as config_file:
-                json.dump(self._config,config_file, indent=2, separators=(',',':'))
+            with io.open(cfg_path, "w", encoding="utf-8") as config_file:
+                json.dump(self._config, config_file, indent=2, separators=(',', ':'))
                 self._logger.info(self._config)
             return {"code": 0}
         except Exception as e:
@@ -142,6 +146,35 @@ class CrealitycloudPlugin(
             }
         else:
             return {"actived": 0, "iot": False, "printer": False, "country": country}
+
+    @octoprint.plugin.BlueprintPlugin.route("/videoSettings", methods=["GET"])
+    @admin_permission.require(403)
+    def get_video_settings(self):
+        data = self._crealitycloud._config.data()
+        return {
+            "code": 0,
+            "disableStream": bool(data.get("disableStream", False)),
+            "externalUrl": data.get("externalUrl", ""),
+            "enableRtspServer": bool(data.get("enableRtspServer", False)),
+        }
+
+    @octoprint.plugin.BlueprintPlugin.route("/videoSettings", methods=["POST"])
+    @admin_permission.require(403)
+    def save_video_settings(self):
+        body = request.json or {}
+        config = self._crealitycloud._config
+        config.load()
+        disable_stream = bool(body.get("disableStream", False))
+        enable_rtsp = bool(body.get("enableRtspServer", False))
+        config.save("disableStream", disable_stream)
+        config.save("externalUrl", (body.get("externalUrl") or "").strip())
+        config.save("enableRtspServer", enable_rtsp)
+        # apply the RTSP relay state immediately
+        if disable_stream or not enable_rtsp:
+            self._crealitycloud.video_stop()
+        else:
+            self._crealitycloud.video_start()
+        return {"code": 0}
 
     @octoprint.plugin.BlueprintPlugin.route("/recorderAction", methods=["GET"])
     def recorder_action(self):
