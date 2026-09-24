@@ -142,6 +142,7 @@ class Recorder(object):
         if self.is_out_limit_size():
             raise RecorderOutOfSizeLimitError("Recorder out of size limit")
         path = self.get_new_recorder_hour_dir()
+        self._logger.info("recorder ffmpeg start, input: " + str(url) + ", dir: " + path)
         if self.get_platform(self) == "win_x64":
             self.ffmpeg = FFmpeg(
                 inputs={url: in_opts},
@@ -150,24 +151,22 @@ class Recorder(object):
                                                 time.time()) + "}': x=10: y=10: fontcolor=white: box=1: boxcolor=0x00000000@1",
                                             "-f", "segment", "-strftime", "1", "-segment_time", "60",
                                             "-reset_timestamps", "1",
-                                            "-vcodec", "h264_omx"]}
+                                            "-vcodec", "libx264", "-preset", "veryfast"]}
             )
         else:
             self.ffmpeg = FFmpeg(
                 inputs={url: in_opts},
                 outputs={path + '/%H-%M-%S.mp4': [
-                                            #"-vf",
-                                            #"drawtext=fontfile=Arial.ttf: text='%{pts\:localtime\:" + str(
-                                            #    time.time()) + "}': x=10: y=10: fontcolor=white: box=1: boxcolor=0x00000000@1",
                                             "-f", "segment", "-strftime", "1", "-segment_time", "60",
                                             "-reset_timestamps", "1",
-                                            "-vcodec", "h264_omx"]}
+                                            "-vcodec", "libx264", "-preset", "veryfast"]}
             )
         try:
             self.ffmpeg.run()
         except FFRuntimeError as ex:
-            if ex.exit_code and ex.exit_code != 1:
-                self._logger.error(ex)
+            # reset so the 1s watchdog (top_of_hour_restart) can retry
+            self.ffmpeg = None
+            self._logger.error("recorder ffmpeg failed: " + str(ex))
 
     def stop_recorder(self):
         """
@@ -196,20 +195,26 @@ class Recorder(object):
         Start record and daemon
         """
         if self._config is not None and resolve_video_source(self._config.data())["disableStream"]:
+            self._logger.info("recorder not started: stream disabled in config")
             return False
-        if self.ffmpeg == None and self.is_out_limit_size() == False:
-            self.timer = RepeatingTimer(1, self.top_of_hour_restart)
-            self.timer.start()
-            self.add_record_time()
-        if self.timer != None:
+        if self.timer is not None:
+            self._logger.info("recorder already running")
             return True
-        else:
+        if self.is_out_limit_size():
+            self._logger.info("recorder not started: disk remaining below limit")
             return False
+        self.timer = RepeatingTimer(1, self.top_of_hour_restart)
+        self.timer.start()
+        self.add_record_time()
+        self._logger.info("recorder started, printid: " + str(self._printid))
+        return True
 
     def stop(self):
         """
         Stop record and daemon
         """
+        if self.timer is None and self.ffmpeg is None:
+            return True
         try:
             self.timer.cancel()
         except Exception as e:
@@ -408,13 +413,19 @@ class Recorder(object):
 
     def concat_video(self):
         self._logger.info('start concat video')
+        if self._printid is None:
+            self._logger.info('skip concat video: no printid')
+            return
         filepath = self.get_new_recorder_hour_dir()
         listpath = filepath + "/" + "playlist.txt"
         outputpath = filepath + "/" + "output.mp4"
-        # 返回path下所有文件构成的一个list列表
-        if os.access(listpath,os.F_OK):    
-            os.remove(listpath)     
-        filelist=os.listdir(filepath)
+        # 返回path下所有分段文件构成的list
+        filelist = [f for f in os.listdir(filepath) if f.endswith(".mp4") and f != "output.mp4"]
+        if not filelist:
+            self._logger.info('skip concat video: no segments in ' + filepath)
+            return
+        if os.access(listpath,os.F_OK):
+            os.remove(listpath)
         filelist.sort()
         fo = open(listpath, "w")
         for item in filelist:
@@ -427,9 +438,10 @@ class Recorder(object):
         try:
             ffmpeg_concat.run()
         except FFRuntimeError as ex:
-            if ex.exit_code and ex.exit_code != 1:
-                self._logger.error(ex)
-        self.del_files(filepath)
+            # keep segments when concat fails, otherwise they would be lost
+            self._logger.error("concat video failed: " + str(ex))
+        else:
+            self.del_files(filepath)
 
     def find_video(self, path):
         path = path.replace('rec-tick-', '', 1)

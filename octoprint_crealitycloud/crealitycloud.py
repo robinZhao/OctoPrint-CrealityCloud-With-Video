@@ -578,7 +578,7 @@ class CrealityCloud(object):
                 self._aliprinter.bedTemp2 = bedTemp2
                 
             #remove gcode in temp folder
-            if os.path.exists(self._aliprinter.gcode_file):
+            if self._aliprinter.gcode_file is not None and os.path.exists(self._aliprinter.gcode_file):
                 try:
                     os.remove(self._aliprinter.gcode_file)
                 except Exception as e:
