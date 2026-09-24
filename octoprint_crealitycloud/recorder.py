@@ -136,8 +136,12 @@ class Recorder(object):
         """
         FFmpeg records video and generates a file per minute
         """
+        if self.ffmpeg is not None:
+            self._logger.info("recorder already started, skip")
+            return
         url, in_opts = self._resolve_input()
         if url is None:
+            self._logger.info("recorder start skipped: no input source (stream disabled?)")
             return
         if self.is_out_limit_size():
             raise RecorderOutOfSizeLimitError("Recorder out of size limit")
@@ -147,7 +151,7 @@ class Recorder(object):
             self.ffmpeg = FFmpeg(
                 inputs={url: in_opts},
                 outputs={path + '/%H-%M-%S.mp4': ["-vf",
-                                            "drawtext=fontfile='C\:/Windows/fonts/Arial.ttf': text='%{pts\:localtime\:" + str(
+                                            "drawtext=fontfile='C\\:/Windows/fonts/Arial.ttf': text='%{pts\\:localtime\\:" + str(
                                                 time.time()) + "}': x=10: y=10: fontcolor=white: box=1: boxcolor=0x00000000@1",
                                             "-f", "segment", "-strftime", "1", "-segment_time", "60",
                                             "-reset_timestamps", "1",
@@ -166,7 +170,9 @@ class Recorder(object):
         except FFRuntimeError as ex:
             # reset so the 1s watchdog (top_of_hour_restart) can retry
             self.ffmpeg = None
-            self._logger.error("recorder ffmpeg failed: " + str(ex))
+            self._logger.error("recorder ffmpeg start failed: " + str(ex))
+        else:
+            self._logger.info("recorder ffmpeg started, pid: " + str(self.ffmpeg.process.pid))
 
     def stop_recorder(self):
         """
@@ -182,9 +188,19 @@ class Recorder(object):
         Daemon thread, detects every second whether the process is stopped and
          whether the logger is out of size and restarted on the hour
         """
-        if self.ffmpeg == None and self.is_out_limit_size() == False:
+        if self.ffmpeg is not None:
+            # .process is None for a brief window between FFmpeg() and run(); guard it
+            process = self.ffmpeg.process
+            if process is not None:
+                exit_code = process.poll()
+                if exit_code is not None:
+                    # process died on its own (crash / source gone): reset so it is restarted
+                    self._logger.error(
+                        "recorder ffmpeg process died (exit code %s), will restart" % exit_code)
+                    self.ffmpeg = None
+        if self.ffmpeg is None and not self.is_out_limit_size():
             threading.Thread(target=self.start_recorder).start()
-        if self.ffmpeg != None:
+        if self.ffmpeg is not None:
             self.update_record_time()
 
         if self.is_out_limit_size():
@@ -366,7 +382,7 @@ class Recorder(object):
         tsx = 0
         path = path.replace('rec-tick-', '', 1)
         path = path.replace('.h264', '', 1)
-        path = time.gmtime(int(path) + 28800)
+        path = time.localtime(int(path))
         datepath = time.strftime("%Y-%m-%d", path)
         path = time.strftime("%Y-%m-%d__%H-%M-%S", path)
         #通过时间戳在vlist.json里找到printid
@@ -444,9 +460,13 @@ class Recorder(object):
             self.del_files(filepath)
 
     def find_video(self, path):
-        path = path.replace('rec-tick-', '', 1)
-        path = path.replace('.h264', '', 1)
-        path = time.gmtime(int(path) + 28800)
+        try:
+            ts = int(str(path).replace('rec-tick-', '', 1).replace('.h264', '', 1))
+        except (TypeError, ValueError):
+            self._logger.error("find_video: invalid rec-tick value: %r" % (path,))
+            return ""
+        # record dirs and vlist entries are named in device local time
+        path = time.localtime(ts)
         datepath = time.strftime("%Y-%m-%d", path)
         path = time.strftime("%Y-%m-%d__%H-%M-%S", path)
         printidpath = ""

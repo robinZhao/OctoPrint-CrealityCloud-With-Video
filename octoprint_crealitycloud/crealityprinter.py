@@ -810,27 +810,50 @@ class CrealityPrinter(object):
 
     @livestream.setter
     def livestream(self, v):
-        if self._livestream == int(v):
+        try:
+            v = int(v)
+        except (TypeError, ValueError):
+            self._logger.error("invalid livestream value: %r" % (v,))
             return
-        else:
-            self._livestream = int(v)
-            self._attributes_msg["livestream"] = self._livestream
-            if self._livestream == 0:
-                self.close_queue.put(self._pullclient)
+        if self._livestream == v:
+            return
+        self._livestream = v
+        self._attributes_msg["livestream"] = self._livestream
+        if self._livestream == 0:
+            self.close_queue.put(self._pullclient)
 
     async def websocket_msg_run(self, webrtcmanager, websocketclient):
-        while True:
-            await asyncio.sleep(0.1)
-            if not self.websocket_queue.empty():
-                message = self.websocket_queue.get()
-                await webrtcmanager.signaling_message_handler(websocketclient, message)
-            if not self.close_queue.empty():
+        loop = asyncio.get_event_loop()
+        stop = False
+        while not stop:
+            # block off the event loop in a worker thread; 0.2s timeout so the
+            # close queue is still serviced when no messages arrive
+            try:
+                message = await loop.run_in_executor(None, self.websocket_queue.get, True, 0.2)
+            except queue.Empty:
+                message = None
+            if message is not None:
+                try:
+                    await webrtcmanager.signaling_message_handler(websocketclient, message)
+                except Exception as e:
+                    self._logger.error("signaling message handling failed: %r" % (e,))
+            while not self.close_queue.empty():
                 peerId = self.close_queue.get()
                 self._logger.info("close_queue:" + str(peerId))
                 if peerId == "all":
                     self._logger.info("close all")
-                    break  
-                await webrtcmanager.remove_peer(peerId)
+                    stop = True
+                    break
+                try:
+                    await webrtcmanager.remove_peer(peerId)
+                except Exception as e:
+                    self._logger.error("remove_peer %s failed: %r" % (peerId, e))
+        # close any peers still attached when the service stops
+        for peer_id in list(webrtcmanager.peers.keys()):
+            try:
+                await webrtcmanager.remove_peer(peer_id)
+            except Exception as e:
+                self._logger.error("remove peer %s on shutdown failed: %r" % (peer_id, e))
         self.WebSocketClient.close()
         self._pc_update_timer.cancel()
         self._pc_update_timer = None
@@ -848,7 +871,12 @@ class CrealityPrinter(object):
         # websocket_queue = queue.Queue()
         # close_queue = queue.Queue()
         self.WebrtcManager = WebrtcManager(self._thingsboard_Id, self._thingsboard_Id, webrtcOptions, self.close_queue, self._jwttoken, self.region, self.recorder, self._config, verbose=True)
-        self.WebSocketClient = WebSocketClient(URL + self._thingsboard_Id, self.websocket_queue, self._jwttoken)
+        # drop stale close requests left over from a previous (dead) service instance
+        while not self.close_queue.empty():
+            self.close_queue.get()
+        self.WebSocketClient = WebSocketClient(
+            URL + self._thingsboard_Id, self.websocket_queue, self._jwttoken,
+            on_giveup=lambda: self.close_queue.put("all"))
         self._pc_update_timer = RepeatedTimer(30,self.peerconnection_upadate,run_first=False)
         self._pc_update_timer.start()
         try:

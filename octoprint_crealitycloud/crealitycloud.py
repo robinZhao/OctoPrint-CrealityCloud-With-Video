@@ -165,7 +165,8 @@ class CrealityCloud(object):
                                                 self._logger.error(e)
                                         else:
                                             self._aliprinter._printTime = 0
-                        except:
+                        except Exception as e:
+                            self._logger.error("read print time from gcode failed: " + repr(e))
                             self._aliprinter.printLeftTime = 0
             else:
                 self._aliprinter.printJobTime = 0
@@ -301,10 +302,10 @@ class CrealityCloud(object):
                 "on_thing_prop_changed params:" + prop_name + ":" + str(prop_value)
             )
             try:
-                exec("self._aliprinter." + prop_name + "='" + str(prop_value) + "'")
+                setattr(self._aliprinter, prop_name, prop_value)
             except Exception as e:
-                self._logger.error(e)
-    
+                self._logger.error("set property %s failed: %r" % (prop_name, e))
+
     def on_server_side_rpc_request(self, client, request_id, request_body):
         # self._aliprinter.rpc_client = client
         # self._aliprinter.rpc_requestid = request_id
@@ -325,9 +326,9 @@ class CrealityCloud(object):
                     "on_thing_prop_changed params:" + prop_name + ":" + str(prop_value)
                 )
                 try:
-                    exec("self._aliprinter." + prop_name + "='" + str(prop_value) + "'")
+                    setattr(self._aliprinter, prop_name, prop_value)
                 except Exception as e:
-                    self._logger.error(e)
+                    self._logger.error("set property %s failed: %r" % (prop_name, e))
                     setReturn = {"code":-1}
             self.tb_reply_rpc(client, request_id, setReturn)
 
@@ -349,10 +350,10 @@ class CrealityCloud(object):
                         getReturn = {"code":-1}
                 else:
                     try:
-                        exec("self._aliprinter." + prop_name + "='" + str(prop_value) + "'")
-                        exec("getReturn.update(self._aliprinter." + prop_name + ")")
+                        setattr(self._aliprinter, prop_name, prop_value)
+                        getReturn.update({prop_name: getattr(self._aliprinter, prop_name)})
                     except Exception as e:
-                        self._logger.error(e)
+                        self._logger.error("get property %s failed: %r" % (prop_name, e))
                         getReturn = {"code":-1}
             self.tb_reply_rpc(client, request_id, getReturn)
 
@@ -569,8 +570,8 @@ class CrealityCloud(object):
                             elif "M104" in line:
                                 self._logger.info("#################" +str(line))
                                 bedTemp2 = int(line.replace("M104 S", ""))                                
-            except:
-                self._logger.info("file not exist")    
+            except Exception as e:
+                self._logger.info("read gcode file failed: " + repr(e))
             if nozzleTemp2 is not None:
                 self._aliprinter.nozzleTemp2 = nozzleTemp2
             
@@ -657,8 +658,8 @@ class CrealityCloud(object):
         if self._aliprinter.bool_boxVersion != True:
             try:
                 self._aliprinter.boxVersion = self._aliprinter._boxVersion
-            except:
-                pass
+            except Exception as e:
+                self._logger.error("report boxVersion failed: " + repr(e))
             else:
                 self.bool_boxVersion = True
                 self._report_boxversion.cancel()

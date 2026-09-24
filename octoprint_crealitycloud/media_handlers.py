@@ -46,6 +46,17 @@ async def blackhole_consume(track):
             return
 
 
+async def _queue_put_drop_oldest(queue, frame):
+    # bounded queue: when the consumer (WebRTC send loop) can't keep up,
+    # drop oldest frames instead of growing memory without limit
+    while queue.full():
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+    queue.put_nowait(frame)
+
+
 class MediaBlackhole:
     """
     A media sink that consumes and discards all media.
@@ -117,9 +128,11 @@ def player_worker(
                 container.seek(0)
                 continue
             if audio_track:
-                asyncio.run_coroutine_threadsafe(audio_track._queue.put(None), loop)
+                asyncio.run_coroutine_threadsafe(
+                    _queue_put_drop_oldest(audio_track._queue, None), loop)
             if video_track:
-                asyncio.run_coroutine_threadsafe(video_track._queue.put(None), loop)
+                asyncio.run_coroutine_threadsafe(
+                    _queue_put_drop_oldest(video_track._queue, None), loop)
             break
 
         # read up to 1 second ahead
@@ -136,7 +149,8 @@ def player_worker(
                 audio_samples += frame.samples
 
                 frame_time = frame.time
-                asyncio.run_coroutine_threadsafe(audio_track._queue.put(frame), loop)
+                asyncio.run_coroutine_threadsafe(
+                    _queue_put_drop_oldest(audio_track._queue, frame), loop)
         elif isinstance(frame, VideoFrame) and video_track:
             if frame.pts is None:  # pragma: no cover
                 print(
@@ -150,7 +164,8 @@ def player_worker(
             frame.pts -= video_first_pts
 
             frame_time = frame.time
-            asyncio.run_coroutine_threadsafe(video_track._queue.put(frame), loop)
+            asyncio.run_coroutine_threadsafe(
+                _queue_put_drop_oldest(video_track._queue, frame), loop)
 
 
 class PlayerStreamTrack(MediaStreamTrack):
@@ -158,7 +173,8 @@ class PlayerStreamTrack(MediaStreamTrack):
         super().__init__()
         self.kind = kind
         self._player = player
-        self._queue = asyncio.Queue()
+        # 16 frames ~= 1.6s at the 10fps source; bounds memory if a peer stalls
+        self._queue = asyncio.Queue(maxsize=16)
         self._start = None
 
     async def recv(self):
@@ -300,7 +316,7 @@ class MediaPlayer:
         if not self.__started and self.__thread is not None:
             self.__log_debug("Stopping worker thread")
             self.__thread_quit.set()
-            self.__thread.join()
+            self.__thread.join(timeout=5)
             self.__thread = None
 
         if not self.__started and self.__container is not None:

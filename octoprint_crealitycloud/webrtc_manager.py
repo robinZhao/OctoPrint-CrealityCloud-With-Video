@@ -6,11 +6,9 @@ from .config import DEFAULT_STREAM_URL, resolve_video_source
 import platform
 import requests
 import json
-import sys
 import time
 import logging
 import os
-sys.path.append('../../src/aiortc')
 from octoprint.util import RepeatedTimer
 
 class WebrtcManager():
@@ -99,6 +97,36 @@ class WebrtcManager():
         peer_ids = list(self.peers.keys())
         for peer_id in peer_ids:
             await self.remove_peer(self.peers[peer_id])           
+
+    def _candidate_tuples(self, sdp):
+        # (sdpMLineIndex, sdpMid, "candidate:...") for every a=candidate: line
+        candidates = []
+        mline_index = -1
+        mid = None
+        for line in sdp.split("\r\n"):
+            if line.startswith("m="):
+                mline_index += 1
+                mid = None
+            elif line.startswith("a=mid:"):
+                mid = line[6:]
+            elif line.startswith("a=candidate:"):
+                candidates.append((mline_index, mid, line[2:]))
+        return candidates
+
+    def _send_candidates(self, sdp, peer_id):
+        for mline_index, mid, candidate in self._candidate_tuples(sdp):
+            data = {
+                "action": "ice_msg",
+                "sdpmessage":
+                        {
+                         "data": {'sdpMLineIndex': mline_index,
+                                   'sdpMid': mid,
+                                   'candidate': candidate},
+                          "type": "candidate"
+                        },
+                "to": peer_id,
+            }
+            self.websockets_client.send(json.dumps(data))
 
     async def add_peer(self, peer_id, peer_type, polite, media):
         if(peer_id in self.peers):
@@ -229,7 +257,13 @@ class WebrtcManager():
                 if vs.get("enableRtspServer"):
                     source = 'rtsp://127.0.0.1:8554/ch0_0'
                     self._logger.info("creating peer " + peer['peerId'] + " with rtsp source: " + source)
-                    webcam = MediaPlayer(source, format="rtsp", options=options)
+                    try:
+                        webcam = MediaPlayer(source, format="rtsp", options=options)
+                    except Exception as e:
+                        # no explicit retry: drop this peer and keep the signaling service alive
+                        self._logger.error("failed to open rtsp source " + source + ": " + str(e))
+                        self.close_queue.put(peer['peerId'])
+                        return
                 else:
                     # direct mode: feed the configured stream source into aiortc
                     source = vs.get("source") or DEFAULT_STREAM_URL
@@ -242,7 +276,12 @@ class WebrtcManager():
                         self.close_queue.put(peer['peerId'])
                         return
             else:
-                webcam = MediaPlayer(self.filepath)
+                try:
+                    webcam = MediaPlayer(self.filepath)
+                except Exception as e:
+                    self._logger.error("failed to open replay file " + self.filepath + ": " + str(e))
+                    self.close_queue.put(peer['peerId'])
+                    return
         peer['mediaplayer'] = webcam
         peer['localVideoStream'] = webcam.video
         audio = None
@@ -290,33 +329,9 @@ class WebrtcManager():
                 self.websockets_client.send(json.dumps(data))
                 peer["sdp"] = peerConnection.localDescription.sdp
                 peer["type"] = peerConnection.localDescription.type
-                sdpList = peerConnection.localDescription.sdp.split("\r\n")
-                candidateList = []
-                for i in sdpList:
-                    if(i.find('candidate') > 0):
-                        candidateList.append(i[2:])
-                sdpMLineIndex = 0
-                sdpMid = 0
-                for i in candidateList:
-                    if i != "end-of-candidates":                       
-                        candidate = i
-                        data = {
-                            "action": "ice_msg",
-                            "sdpmessage": 
-                                    {
-                                     "data": {'sdpMLineIndex': sdpMLineIndex, 
-                                            'sdpMid': sdpMid,
-                                            'candidate': candidate},
-                                      "type":"candidate"
-                                    },
-                            "to": peer['peerId'],
-                            }
-                        self.websockets_client.send(json.dumps(data))
-                    else:
-                        sdpMLineIndex = 1
-                        sdpMid = 1         
-        except:
-            self._logger.info('Something related to update_negotiation_logic went wrong')
+                self._send_candidates(peerConnection.localDescription.sdp, peer['peerId'])
+        except Exception as e:
+            self._logger.error('update_negotiation_logic failed: ' + repr(e))
 
         finally:
             peer["makingOffer"] = False
@@ -372,34 +387,10 @@ class WebrtcManager():
                 self.websockets_client.send(json.dumps(data))
                 peer["sdp"] = peerConnection.localDescription.sdp
                 peer["type"] = peerConnection.localDescription.type				
-                sdpList = peerConnection.localDescription.sdp.split("\r\n")
-                candidateList = []
-                for i in sdpList:
-                    if(i.find('candidate') > 0):
-                        candidateList.append(i[2:])
-                sdpMLineIndex = 0
-                sdpMid = 0
-                for i in candidateList:
-                    if i != "end-of-candidates":                       
-                        candidate = i
-                        data = {
-                            "action": "ice_msg",
-                            "sdpmessage": 
-                                    {
-                                      "data": {'sdpMLineIndex': sdpMLineIndex, 
-                                            'sdpMid': sdpMid,
-                                            'candidate': candidate},
-                                      "type":"candidate"
-                                    },
-                            "to": peer['peerId'],
-                            }
-                        self.websockets_client.send(json.dumps(data))
-                    else:
-                        sdpMLineIndex = 1
-                        sdpMid = 1                  
+                self._send_candidates(peerConnection.localDescription.sdp, peer['peerId'])
 
-        except:
-            self._logger.info("Something related to update_session_description went wrong")
+        except Exception as e:
+            self._logger.error("update_session_description failed: " + repr(e))
 
     async def update_ice_candidate(self, peer, candidate):
         """
@@ -430,17 +421,17 @@ class WebrtcManager():
             try:
                 if data_list.index('tcptype') >= 0:
                     tcpType = data_list[data_list.index('tcptype') + 1]
-            except:
+            except ValueError:
                 pass
-            try:                   
+            try:
                 if data_list.index('raddr') >= 0:
                     raddr = data_list[data_list.index('raddr') + 1]
-            except:
+            except ValueError:
                 pass
-            try:             
+            try:
                 if data_list.index('rport') >= 0:
                     rport = int(data_list[data_list.index('rport') + 1])
-            except:
+            except ValueError:
                 pass
 
             
@@ -459,9 +450,9 @@ class WebrtcManager():
                                                     sdpMLineIndex = sdpMLineIndex,
                                                     tcpType = tcpType)
                     await peerConnection.addIceCandidate(rtc_candidate)
-            except:
+            except Exception as e:
                 if(not peer["ignoreOffer"]):
-                    self._logger.info("Something related to addIceCandidate went wrong")
+                    self._logger.error("addIceCandidate failed: " + repr(e))
             
     async def remove_peer(self, peerId):
         """

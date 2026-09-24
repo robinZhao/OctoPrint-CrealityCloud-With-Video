@@ -40,14 +40,15 @@ class CrealityConfig(object):
                 try:
                     self._data = json.load(f)
                     f.close()
-                except:
+                except ValueError:
+                    # corrupt JSON: drop it so it is re-created on next activation
                     os.remove(self._path)
         if os.path.exists(self._p2p_path):
             with open(self._p2p_path, "r") as f:
                 try:
                     self._p2pdata = json.load(f)
                     f.close()
-                except:
+                except ValueError:
                     os.remove(self._p2p_path)
 
     def data(self):
