@@ -34,6 +34,7 @@ class Recorder(object):
         self._config = CrealityConfig(plugin) if plugin is not None else None
         self.timer = None
         self.ffmpeg = None
+        self._running = False
         self._logger = logging.getLogger("octoprint.plugins.crealitycloudrecorder")
         self._limit_size = 500 # limit size 500MB
         self._printid = None
@@ -198,7 +199,9 @@ class Recorder(object):
                     self._logger.error(
                         "recorder ffmpeg process died (exit code %s), will restart" % exit_code)
                     self.ffmpeg = None
-        if self.ffmpeg is None and not self.is_out_limit_size():
+        # _running (cleared by stop() before ffmpeg is nulled) blocks the zombie
+        # restart when stop() races with this watchdog iteration
+        if self.ffmpeg is None and self._running and not self.is_out_limit_size():
             threading.Thread(target=self.start_recorder).start()
         if self.ffmpeg is not None:
             self.update_record_time()
@@ -219,6 +222,7 @@ class Recorder(object):
         if self.is_out_limit_size():
             self._logger.info("recorder not started: disk remaining below limit")
             return False
+        self._running = True
         self.timer = RepeatingTimer(1, self.top_of_hour_restart)
         self.timer.start()
         self.add_record_time()
@@ -229,6 +233,9 @@ class Recorder(object):
         """
         Stop record and daemon
         """
+        # must happen before stop_recorder() nulls self.ffmpeg, so a watchdog
+        # iteration already in flight sees _running=False when it re-reads ffmpeg
+        self._running = False
         if self.timer is None and self.ffmpeg is None:
             return True
         try:

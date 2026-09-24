@@ -27,6 +27,7 @@
     <label data-bind="text: recorderStatus">stop</label>
     <button type="button" data-bind="click: () => recorderAction('START')">start record</button>
     <button type="button" data-bind="click: () => recorderAction('STOP')">stop record</button>
+    <button type="button" data-bind="click: () => getDataList()">refresh</button>
 </div>
 <select id="date-list" data-bind="foreach: dateList, event: {change: () => getHourList()}">
     <option data-bind="text: $data"></option>

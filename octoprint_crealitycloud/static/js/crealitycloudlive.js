@@ -46,6 +46,12 @@ $(function () {
                         if (data.code === 5) {
                             alert(data.message)
                         }
+                        if (action === "STOP" && data.code === 0) {
+                            // let ffmpeg flush/close the last segment before refreshing
+                            setTimeout(function () {
+                                self.getDataList();
+                            }, 1000);
+                        }
                     }
                 },
             });
